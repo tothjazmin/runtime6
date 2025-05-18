@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lövöldözős Játék - Bolygóvédelem</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: Arial, sans-serif;
+      color: white;
+      display: flex;
+      height: 100vh;
+      align-items: center;
+      justify-content: center;
+    }
+    #container {
+      display: flex;
+      gap: 20px;
+      background: #111;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 20px #0f0;
+      position: relative;
+    }
+    #rules {
+      width: 220px;
+      font-size: 16px;
+      line-height: 1.4;
+      user-select: none;
+    }
+    #rules h2 {
+      margin-top: 0;
+      color: #0f0;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    #rules ul {
+      padding-left: 20px;
+    }
+    #rules li {
+      margin-bottom: 8px;
+    }
+    #gameWrapper {
+      position: relative;
+    }
+    canvas {
+      background: #111;
+      width: 800px;
+      height: 600px;
+      display: block;
+      border: 2px solid #0f0;
+      border-radius: 8px;
+    }
+    #restartBtn {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 10px 20px;
+      font-size: 18px;
+      background: #222;
+      color: white;
+      border: 2px solid white;
+      cursor: pointer;
+      display: none;
+      z-index: 10;
+      border-radius: 4px;
+      user-select: none;
+    }
+    #freezeBox {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 100, 255, 0.8);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #e0f7ff;
+      user-select: none;
+      z-index: 20;
+      text-align: center;
+      min-width: 160px;
+    }
+    #levelBox {
+      position: absolute;
+      top: 60px;
+      right: 10px;
+      background: rgba(0, 150, 0, 0.8);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #d0ffd0;
+      user-select: none;
+      z-index: 20;
+      text-align: center;
+      min-width: 140px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="rules">
+      <h2>Játék Szabályok</h2>
+      <ul>
+        <li>Mozgás: ← → vagy A D</li>
+        <li>Lövés: SPACE (500 ponttól dupla lövés)</li>
+        <li>Fagyasztás: SHIFT (csak ha van fagyasztás)</li>
+        <li>Védd meg a bolygót (5000 életpont)</li>
+        <li>Aszteroidák lelövése: +10 pont</li>
+        <li>250 pontonként: +1 élet, +1 fagyasztás</li>
+        <li>Űrhajó találat: -1 élet</li>
+        <li>Bolygó teljesen sérült vagy 0 élet → GAME OVER</li>
+        <li>Szint 5 elérése: YOU WIN!</li>
+        <li>Újraindításhoz: bal felső sarok</li>
+      </ul>
+    </div>
+    <div id="gameWrapper">
+      <canvas id="gameCanvas" width="800" height="600"></canvas>
+      <button id="restartBtn">Újraindítás</button>
+      <div id="freezeBox" style="display:none;">Fagyasztások: 0</div>
+      <div id="levelBox">Szint: 1</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+    const freezeBox = document.getElementById('freezeBox');
+    const levelBox = document.getElementById('levelBox');
+
+    const spaceshipImg = new Image();
+    spaceshipImg.src = 'spaceship-clipart-lg.png';
+
+    const asteroidImg = new Image();
+    asteroidImg.src = 'asteroida.png';
+
+    let bullets = [];
+    let enemies = [];
+    let lifePickups = [];
+
+    const player = {
+      x: canvas.width / 2 - 30,
+      y: canvas.height - 110,
+      width: 60,
+      height: 100,
+      speed: 8,
+    };
+
+    let keys = {};
+    window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    let score = 0;
+    let lives = 3;
+    let level = 1;
+    let gameOver = false;
+    let youWin = false;
+
+    let planetHealth = 5000;
+    const planetMaxHealth = 5000;
+
+    let freezeActive = false;
+    let freezeCharges = 0;
+    const freezeDuration = 3000;
+    let freezeTimer = 0;
+
+    let canShoot = true;
+    let shootDelay = 400;
+
+    let spawnDelay = 1000;
+    let lastBonusScore = 0;
+
+    function spawnEnemy() {
+      enemies.push({
+        x: Math.random() * (canvas.width - 40),
+        y: -40,
+        width: 40,
+        height: 40,
+        speed: 1 + level * 0.8
+      });
+    }
+
+    function spawnLifePickup() {
+      lifePickups.push({
+        x: Math.random() * (canvas.width - 30),
+        y: -30,
+        width: 30,
+        height: 30,
+        speed: 2
+      });
+    }
+
+    function drawPlayer() {
+      ctx.drawImage(spaceshipImg, player.x, player.y, player.width, player.height);
+    }
+
+    function updatePlayer() {
+      if ((keys['arrowleft'] || keys['a']) && player.x > 0) player.x -= player.speed;
+      if ((keys['arrowright'] || keys['d']) && player.x + player.width < canvas.width) player.x += player.speed;
+    }
+
+    function shootBullet() {
+      if (!canShoot) return;
+
+      if (score < 500) {
+        bullets.push({
+          x: player.x + player.width / 2 - 2,
+          y: player.y,
+          width: 4,
+          height: 10,
+          speed: 8 + level,
+          color: 'red'
+        });
+      } else {
+        bullets.push({
+          x: player.x + 10,
+          y: player.y,
+          width: 4,
+          height: 10,
+          speed: 8 + level,
+          color: 'limegreen'
+        });
+        bullets.push({
+          x: player.x + player.width - 14,
+          y: player.y,
+          width: 4,
+          height: 10,
+          speed: 8 + level,
+          color: 'limegreen'
+        });
+      }
+
+      canShoot = false;
+      setTimeout(() => { canShoot = true; }, shootDelay);
+    }
+
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Space') shootBullet();
+      if (e.key.toLowerCase() === 'shift' && freezeCharges > 0) activateFreeze();
+    });
+
+    function drawBullets() {
+      bullets.forEach(b => {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.width, b.height);
+      });
+    }
+
+    function updateBullets() {
+      bullets = bullets.filter(b => {
+        b.y -= b.speed;
+        return b.y + b.height >= 0;
+      });
+    }
+
+    function drawEnemies() {
+      enemies.forEach(e => {
+        ctx.drawImage(asteroidImg, e.x, e.y, e.width, e.height);
+      });
+    }
+
+    function updateEnemies() {
+      enemies = enemies.filter(e => {
+        if (!freezeActive) e.y += e.speed;
+        if (e.y >= canvas.height) {
+          planetHealth -= 50;
+          if (planetHealth <= 0) {
+            planetHealth = 0;
+            gameOver = true;
+            restartBtn.style.display = 'block';
+          }
+          return false;
+        }
+        return true;
+      });
+    }
+
+    function drawLifePickups() {
+      lifePickups.forEach(lp => {
+        ctx.fillStyle = 'red';
+        ctx.beginPath();
+        ctx.arc(lp.x + lp.width / 2, lp.y + lp.height / 2, lp.width / 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    function updateLifePickups() {
+      lifePickups = lifePickups.filter(lp => {
+        lp.y += lp.speed;
+        if (
+          lp.x < player.x + player.width &&
+          lp.x + lp.width > player.x &&
+          lp.y < player.y + player.height &&
+          lp.y + lp.height > player.y
+        ) {
+          lives++;
+          return false;
+        }
+        return lp.y <= canvas.height;
+      });
+    }
+
+    function checkCollisions() {
+      bullets.forEach((b, bi) => {
+        enemies.forEach((e, ei) => {
+          if (
+            b.x < e.x + e.width &&
+            b.x + b.width > e.x &&
+            b.y < e.y + e.height &&
+            b.y + b.height > e.y
+          ) {
+            bullets.splice(bi, 1);
+            enemies.splice(ei, 1);
+            score += 10;
+
+            if (score - lastBonusScore >= 250) {
+              lastBonusScore = score;
+              lives++;
+              freezeCharges++;
+              spawnLifePickup();
+            }
+
+            let newLevel = Math.min(5, Math.floor(score / 250) + 1);
+            if (newLevel > level) {
+              level = newLevel;
+              spawnDelay = Math.max(300, 1000 - (level - 1) * 150);
+              shootDelay = Math.max(100, 400 - (level - 1) * 60);
+              clearInterval(spawnInterval);
+              spawnInterval = setInterval(spawnEnemy, spawnDelay);
+            }
+          }
+        });
+      });
+
+      enemies = enemies.filter(e => {
+        if (
+          e.x < player.x + player.width &&
+          e.x + e.width > player.x &&
+          e.y < player.y + player.height &&
+          e.y + e.height > player.y
+        ) {
+          lives--;
+          if (lives <= 0) {
+            lives = 0;
+            gameOver = true;
+            restartBtn.style.display = 'block';
+          }
+          return false;
+        }
+        return true;
+      });
+    }
+
+    function drawScore() {
+      ctx.fillStyle = 'white';
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Pontszám: ${score}`, 10, 580);
+    }
+
+    function drawLives() {
+      ctx.fillStyle = 'white';
+      ctx.font = '20px Arial';
+      ctx.fillText(`Életek: ${lives}`, 10, 550);
+    }
+
+    function drawPlanetHealth() {
+      const barWidth = 300;
+      const barHeight = 20;
+      const x = canvas.width / 2 - barWidth / 2;
+      const y = 40;
+      ctx.strokeStyle = 'white';
+      ctx.strokeRect(x, y, barWidth, barHeight);
+      ctx.fillStyle = 'limegreen';
+      const healthWidth = (planetHealth / planetMaxHealth) * barWidth;
+      ctx.fillRect(x, y, healthWidth, barHeight);
+    }
+
+    function activateFreeze() {
+      if (freezeActive || freezeCharges <= 0) return;
+      freezeCharges--;
+      freezeActive = true;
+      freezeTimer = Date.now();
+    }
+
+    function updateFreeze() {
+      if (freezeActive && Date.now() - freezeTimer > freezeDuration) {
+        freezeActive = false;
+      }
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = 'red';
+      ctx.font = '72px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2);
+    }
+
+    function drawYouWin() {
+      ctx.fillStyle = 'lime';
+      ctx.font = '72px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2);
+    }
+
+    function resetGame() {
+      score = 0;
+      lives = 3;
+      level = 1;
+      gameOver = false;
+      youWin = false;
+      freezeActive = false;
+      freezeCharges = 0;
+      planetHealth = planetMaxHealth;
+      bullets = [];
+      enemies = [];
+      lifePickups = [];
+      lastBonusScore = 0;
+      player.x = canvas.width / 2 - player.width / 2;
+      restartBtn.style.display = 'none';
+      freezeBox.style.display = 'none';
+      spawnDelay = 1000;
+      shootDelay = 400;
+      clearInterval(spawnInterval);
+      spawnInterval = setInterval(spawnEnemy, spawnDelay);
+      requestAnimationFrame(gameLoop);
+    }
+
+    restartBtn.addEventListener('click', resetGame);
+
+    let spawnInterval = setInterval(spawnEnemy, spawnDelay);
+
+    function gameLoop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (gameOver) {
+        drawGameOver();
+        return;
+      }
+
+      if (level >= 5) {
+        youWin = true;
+      }
+
+      if (youWin) {
+        drawYouWin();
+        restartBtn.style.display = 'block';
+        return;
+      }
+
+      updateFreeze();
+      updatePlayer();
+      updateBullets();
+      updateEnemies();
+      updateLifePickups();
+      checkCollisions();
+
+      drawPlayer();
+      drawBullets();
+      drawEnemies();
+      drawLifePickups();
+
+      drawScore();
+      drawLives();
+      drawPlanetHealth();
+
+      if (level >= 1) {
+        freezeBox.style.display = 'block';
+        freezeBox.textContent = `Fagyasztások: ${freezeCharges}`;
+      }
+
+      levelBox.textContent = `Szint: ${level}`;
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    spaceshipImg.onload = () => {
+      asteroidImg.onload = () => {
+        resetGame();
+      };
+    };
+  </script>
+</body>
+</html>
